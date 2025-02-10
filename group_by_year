@@ -1,0 +1,166 @@
+# Consolidate the disparate Divvy historical files into year-based files
+
+import os
+import pandas as pd
+
+# Define directories and file patterns
+BASE_DIR = r"filepath"
+OUTPUT_DIR = os.path.join(BASE_DIR, "output")
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+# File grouping by year
+trip_files_by_year = {
+    2013: ['Divvy_Trips_2013.csv'],
+    2014: ['Divvy_Trips_2014_Q1Q2.csv','Divvy_Trips_2014-Q3-07.csv','Divvy_Trips_2014-Q3-0809.csv','Divvy_Trips_2014-Q4.csv'],
+    2015: ['Divvy_Trips_2015_07.csv','Divvy_Trips_2015_08.csv','Divvy_Trips_2015_09.csv','Divvy_Trips_2015_Q4.csv','Divvy_Trips_2015-Q1.csv','Divvy_Trips_2015-Q2.csv'],
+    2016: ['Divvy_Trips_2016_04.csv','Divvy_Trips_2016_05.csv','Divvy_Trips_2016_06.csv','Divvy_Trips_2016_Q1.csv','Divvy_Trips_2016_Q3.csv','Divvy_Trips_2016_Q4.csv'],
+    2017: ['Divvy_Trips_2017_Q1.csv','Divvy_Trips_2017_Q2.csv','Divvy_Trips_2017_Q3.csv','Divvy_Trips_2017_Q4.csv'],
+    2018: ['Divvy_Trips_2018_Q1.csv','Divvy_Trips_2018_Q2.csv','Divvy_Trips_2018_Q3.csv','Divvy_Trips_2018_Q4.csv'],
+    2019: ['Divvy_Trips_2019_Q1.csv','Divvy_Trips_2019_Q2.csv','Divvy_Trips_2019_Q3.csv','Divvy_Trips_2019_Q4.csv'],
+    2020: ['202004-divvy-tripdata.csv','202005-divvy-tripdata.csv','202006-divvy-tripdata.csv','202007-divvy-tripdata.csv','202008-divvy-tripdata.csv','202009-divvy-tripdata.csv','202010-divvy-tripdata.csv','202011-divvy-tripdata.csv','202012-divvy-tripdata.csv','Divvy_Trips_2020_Q1.csv'],
+    2021: ['202101-divvy-tripdata.csv','202102-divvy-tripdata.csv','202103-divvy-tripdata.csv','202104-divvy-tripdata.csv','202105-divvy-tripdata.csv','202106-divvy-tripdata.csv','202107-divvy-tripdata.csv','202108-divvy-tripdata.csv','202109-divvy-tripdata.csv','202110-divvy-tripdata.csv','202111-divvy-tripdata.csv','202112-divvy-tripdata.csv'],
+    2022: ['202201-divvy-tripdata.csv','202202-divvy-tripdata.csv','202203-divvy-tripdata.csv','202204-divvy-tripdata.csv','202205-divvy-tripdata.csv','202206-divvy-tripdata.csv','202207-divvy-tripdata.csv','202208-divvy-tripdata.csv','202209-divvy-publictripdata.csv','202210-divvy-tripdata.csv','202211-divvy-tripdata.csv','202212-divvy-tripdata.csv'],
+    2023: ['202301-divvy-tripdata.csv','202302-divvy-tripdata.csv','202303-divvy-tripdata.csv','202304-divvy-tripdata.csv','202305-divvy-tripdata.csv','202306-divvy-tripdata.csv','202307-divvy-tripdata.csv','202308-divvy-tripdata.csv','202309-divvy-tripdata.csv','202310-divvy-tripdata.csv','202311-divvy-tripdata.csv','202312-divvy-tripdata.csv'],
+    2024: ['202401-divvy-tripdata.csv','202402-divvy-tripdata.csv','202403-divvy-tripdata.csv','202404-divvy-tripdata.csv','202405-divvy-tripdata.csv','202406-divvy-tripdata.csv','202407-divvy-tripdata.csv','202408-divvy-tripdata.csv','202409-divvy-tripdata.csv','202410-divvy-tripdata.csv','202411-divvy-tripdata.csv','202412-divvy-tripdata.csv']
+}
+
+# Synonyms and final columns
+trip_synonyms = {
+    "start_station_name": ["start_station_name", "from_station_name"],
+    "end_station_name": ["end_station_name", "to_station_name", "name"],
+    "start_station_lng": ["start_lng", "longitude"],
+    "end_station_lng": ["end_lng"],
+    "start_station_lat": ["start_lat"],
+    "end_station_lat": ["end_lat"],
+    "start_station_id": ["start_station_id", "from_station_id"],
+    "end_station_id": ["end_station_id", "to_station_id", "id"],
+    "user_type": ["member_casual", "usertype", "user_type"],
+    "bike_id": ["bikeid", "bike_id"],
+    "duration_raw": ["tripduration", "trip_duration"],
+    "started_at": ["started_at", "start_time"],
+    "ended_at": ["ended_at", "end_time"],
+    "trip_id": ["ride_id", "trip_id"],
+    "rideable_type": ["rideable_type"],
+    "landmark_id": ["landmark"]
+}
+
+trip_final_cols = [
+    "start_station_name", "end_station_name", "start_station_lng", "end_station_lng",
+    "start_station_lat", "end_station_lat", "start_station_id", "end_station_id",
+    "user_type", "bike_id", "duration_raw", "started_at", "ended_at", "trip_id",
+    "rideable_type", "duration_calc", "landmark_id"
+]
+
+# Mapping for user_type standardization
+USER_TYPE_MAP = {
+    "Customer": "casual",
+    "Subscriber": "member",
+    "Dependent": "dependent",
+    "casual": "casual",
+    "member": "member"
+}
+
+# Replace "nan" strings with NULL
+def replace_nan_with_null(df):
+    return df.replace("nan", pd.NA)
+
+# Coerce column types
+def clean_and_coerce_column(df, col_name, desired_type):
+    if desired_type == "FLOAT64":
+        df[col_name] = pd.to_numeric(df[col_name], errors='coerce')
+    elif desired_type == "INT64":
+        df[col_name] = pd.to_numeric(df[col_name], errors='coerce').fillna(0).astype('int64')
+    elif desired_type == "STRING":
+        df[col_name] = df[col_name].astype(str).str.strip()
+    elif desired_type == "TIMESTAMP":
+        df[col_name] = pd.to_datetime(df[col_name], errors='coerce')
+    return df
+
+# Standardize datetime formats
+def standardize_datetime(df, col_name, year):
+    formats = {
+        2013: "%Y-%m-%d %H:%M",
+        2014: "%m/%d/%Y %H:%M",
+        2015: "%m/%d/%Y %H:%M"
+    }
+    date_format = formats.get(year)
+    df[col_name] = pd.to_datetime(df[col_name], format=date_format, errors='coerce')
+    return df
+
+# Interactive column assignment for unknown columns
+def assign_unknown_columns(unknown_columns):
+    print("\nUnmapped columns detected:")
+    print("\n".join(unknown_columns))
+    print("\nPlease assign them to standardized columns or type 'ignore' to drop:")
+    column_mapping = {}
+    for col in unknown_columns:
+        while True:
+            user_input = input(f"Map column '{col}' to (or 'ignore'): ").strip()
+            if user_input == "ignore" or user_input in trip_final_cols:
+                column_mapping[col] = user_input
+                break
+            else:
+                print("Invalid input. Enter a valid standardized column name or 'ignore'.")
+    return column_mapping
+
+# Unify columns with user interaction for unknowns
+def unify_columns(df, synonyms_map, final_columns):
+    df_out = pd.DataFrame()
+    col_lower_map = {c.lower(): c for c in df.columns}
+    existing_lower_cols = set(col_lower_map.keys())
+    unknown_columns = set(df.columns)
+
+    for final_col in final_columns:
+        possible_syns = synonyms_map.get(final_col, [])
+        matched_cols = [col_lower_map[syn.lower()] for syn in possible_syns if syn.lower() in existing_lower_cols]
+        unknown_columns -= set(matched_cols)
+        if matched_cols:
+            df_out[final_col] = df[matched_cols[0]]
+        else:
+            df_out[final_col] = pd.NA
+
+    if unknown_columns:
+        new_mappings = assign_unknown_columns(unknown_columns)
+        for col, mapping in new_mappings.items():
+            if mapping != "ignore":
+                df_out[mapping] = df[col]
+
+    return df_out
+
+# Process files by year
+def process_trip_files(trip_files_by_year, synonyms_map, final_columns):
+    for year, files in trip_files_by_year.items():
+        print(f"Processing files for year {year}...")
+        yearly_data = []
+        for file in files:
+            file_path = os.path.join(BASE_DIR, file)
+            print(f"Loading file: {file_path}")
+            df = pd.read_csv(file_path)
+            df = replace_nan_with_null(df)
+            unified_df = unify_columns(df, synonyms_map, final_columns)
+            for col, dtype in [
+                ("start_station_lng", "FLOAT64"), ("end_station_lng", "FLOAT64"),
+                ("start_station_lat", "FLOAT64"), ("end_station_lat", "FLOAT64"),
+                ("start_station_id", "STRING"), ("end_station_id", "STRING"),
+                ("user_type", "STRING"), ("bike_id", "STRING"),
+                ("trip_id", "STRING"), ("rideable_type", "STRING"), ("landmark_id", "STRING"),
+                ("started_at", "TIMESTAMP"), ("ended_at", "TIMESTAMP")
+            ]:
+                unified_df = clean_and_coerce_column(unified_df, col, dtype)
+
+            # Standardize user_type
+            unified_df["user_type"] = unified_df["user_type"].map(USER_TYPE_MAP).fillna("unknown")
+
+            # Calculate duration_calc
+            unified_df["duration_calc"] = (
+                unified_df["ended_at"] - unified_df["started_at"]
+            ).dt.total_seconds().fillna(0).astype(int)
+
+            yearly_data.append(unified_df)
+
+        combined_df = pd.concat(yearly_data, ignore_index=True)
+        combined_df.to_csv(os.path.join(OUTPUT_DIR, f"{year}_trips.csv"), index=False)
+        print(f"Saved {year}_trips.csv")
+
+# Main Execution
+process_trip_files(trip_files_by_year, trip_synonyms, trip_final_cols)
