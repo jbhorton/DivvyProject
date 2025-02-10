@@ -1,0 +1,82 @@
+# Standardizing the STRING based columns. 
+# Many columns were better of interpreted as strings because thee data types were mixed but needed to be preserved. 
+# For example, trip ids were sometimes an integer, other times a string of numbers and letters.
+
+# Step 3 in the automated transformation sequence.
+# Transform basic strings.
+
+#Step summary
+#Step 1 - Timestamp transformation
+#Step 2 - Duration calculation in seconds
+#Step 3 - Basic string calculation
+#Step 4 - Float and Int transformations
+#Step 5 - Specialized Rider-type transformation
+#Step 6 - Specialized xxx_name transformations
+
+#Objective summary
+
+#def to_lower_string('column')
+# Processed by Step3.pyand outputs into yyyy_clean3
+# Coerce all data to a lower-case STRING datatype.
+# If possible overwrite the old columns. If not possible, write to new columns prefixed with 'user_' instead of 'rider_' and drop the original columns.
+# Empty cells and 'nan' cells to be formatted as SQL NULL value.
+
+#def to_string('column')
+# Processed by Step3.py and outputs into yyyy_clean3
+# Coerce all data to a cleaned and trimmed STRING datatype.
+# If possible overwrite the old columns. If not possible, write to new column in the format 'old-column_standard' and drop the original columns.
+# Empty cells and 'nan' cells to be formatted as SQL NULL value.
+
+
+import pandas as pd
+import os
+
+def to_string(value):
+    """Trim and clean string data."""
+    return str(value).strip() if pd.notna(value) else None
+
+def to_lower_string(value):
+    """Convert string to lowercase."""
+    return str(value).lower() if pd.notna(value) else None
+
+def process_file(file_path, output_path):
+    """Process a single file for string transformations."""
+    file_name = os.path.basename(file_path)
+    print(f"Processing file: {file_name}")
+
+    try:
+        # Load in chunks to reduce memory usage
+        chunk_size = 500000  # Adjust based on available memory
+        processed_chunks = []
+
+        for chunk in pd.read_csv(file_path, dtype=str, chunksize=chunk_size):
+            print(f"Processing chunk of size {len(chunk)}...")
+
+            # Apply transformations
+            chunk['id_trip'] = chunk['id_trip'].apply(to_string)
+            chunk['id_end_station'] = chunk['id_end_station'].apply(to_string)
+            chunk['id_start_station'] = chunk['id_start_station'].apply(to_string)
+            chunk['rider_gender'] = chunk['rider_gender'].apply(to_lower_string)
+            chunk['rideable_type'] = chunk['rideable_type'].apply(to_lower_string)
+
+            processed_chunks.append(chunk)
+
+        # Concatenate all processed chunks
+        result = pd.concat(processed_chunks)
+
+        # Save to output file
+        result.to_csv(output_path, index=False)
+        print(f"File saved: {output_path}")
+
+    except Exception as e:
+        print(f"Error processing file {file_name}: {e}")
+
+# Run the transformation
+year = input("Enter year of file to be processed: ")
+
+# File paths
+input_file = f"input_filepath{year}_clean-2.csv"
+output_file = f"output_filepath{year}_clean-3.csv"
+
+# Run the file processing function
+process_file(input_file, output_file)
