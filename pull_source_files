@@ -1,5 +1,5 @@
 # Pulling the files from the download portal and organizing them for cleaning
-# Python command line code
+# Python
 
 import os
 import requests
