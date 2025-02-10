@@ -1,0 +1,131 @@
+# Batch upload the cleaned files to BigQuery for analysis purposes
+
+import pandas as pd
+from google.cloud import bigquery
+import os
+
+# Path to your Google Cloud credentials JSON file
+CREDENTIALS_PATH = r"big-query-json-permission-file_filepath"
+DATA_FOLDER = r"filepath"
+
+# BigQuery project and dataset information
+PROJECT_ID = "project_name"
+DATASET_ID = "dataset_name"
+
+# Schema with integer fields
+SCHEMA = [
+    bigquery.SchemaField("id_bike", "STRING"),  # Avoiding INT issues
+    bigquery.SchemaField("id_trip", "STRING"),
+    bigquery.SchemaField("id_end_station", "STRING"),
+    bigquery.SchemaField("name_end_station", "STRING"),
+    bigquery.SchemaField("id_start_station", "STRING"),
+    bigquery.SchemaField("name_start_station", "STRING"),
+    bigquery.SchemaField("rider_bday", "STRING"),  # Preventing mixed type errors
+    bigquery.SchemaField("lat_end_station", "FLOAT"),
+    bigquery.SchemaField("lng_end_station", "FLOAT"),
+    bigquery.SchemaField("rider_gender", "STRING"),
+    bigquery.SchemaField("rider_type", "STRING"),
+    bigquery.SchemaField("rideable_type", "STRING"),
+    bigquery.SchemaField("lat_start_station", "FLOAT"),
+    bigquery.SchemaField("lng_start_station", "FLOAT"),
+    bigquery.SchemaField("trip_start_time", "TIMESTAMP"),
+    bigquery.SchemaField("trip_end_time", "TIMESTAMP"),
+    bigquery.SchemaField("duration_seconds", "INTEGER"),
+]
+
+# List of integer columns
+INTEGER_COLUMNS = ["duration_seconds"]
+
+def authenticate_bigquery():
+    """Authenticate with BigQuery using the provided JSON credentials."""
+    client = bigquery.Client.from_service_account_json(CREDENTIALS_PATH)
+    return client
+
+def create_dataset_if_not_exists(client):
+    """Create the BigQuery dataset if it doesn't already exist."""
+    dataset_ref = f"{PROJECT_ID}.{DATASET_ID}"
+    try:
+        client.get_dataset(dataset_ref)  # Check if dataset exists
+        print(f"Dataset '{DATASET_ID}' already exists.")
+    except Exception:
+        print(f"Creating dataset '{DATASET_ID}'...")
+        dataset = bigquery.Dataset(dataset_ref)
+        dataset.location = "US"
+        client.create_dataset(dataset, exists_ok=True)
+        print(f"Dataset '{DATASET_ID}' created.")
+
+def clean_numeric_columns(file_path):
+    """Read and clean numeric columns to ensure integers have correct format."""
+    print(f"Cleaning numeric columns for {file_path}...")
+
+    df = pd.read_csv(file_path, dtype=str)  # Load everything as strings
+
+    # Convert integer columns
+    for col in INTEGER_COLUMNS:
+        if col in df.columns:
+            df[col] = df[col].astype(float).astype("Int64")  # Convert to integer safely
+
+    # Save cleaned file
+    cleaned_path = file_path.replace(".csv", "_cleaned.csv")
+    df.to_csv(cleaned_path, index=False)
+    print(f"Cleaned file saved at {cleaned_path}")
+    return cleaned_path  # Return path of the cleaned file
+
+def upload_file_to_bigquery(client, year, dry_run=False):
+    """Upload a single CSV file to BigQuery."""
+    original_file = os.path.join(DATA_FOLDER, f"{year}_trips.csv")
+
+    if not os.path.exists(original_file):
+        print(f"File for year {year} not found at {original_file}. Skipping.")
+        return
+
+    # Clean the numeric columns
+    cleaned_file = clean_numeric_columns(original_file)
+
+    table_id = f"{PROJECT_ID}.{DATASET_ID}.{year}_trips"
+
+    print(f"Uploading cleaned file for year {year} from {cleaned_file}...")
+
+    job_config = bigquery.LoadJobConfig(
+        schema=SCHEMA,
+        write_disposition="WRITE_TRUNCATE",
+        source_format=bigquery.SourceFormat.CSV,
+        null_marker="",  # Allow blank cells as NULL
+        skip_leading_rows=1
+    )
+
+    with open(cleaned_file, "rb") as source_file:
+        try:
+            if dry_run:
+                print(f"Performing dry run for {table_id}...")
+                job = client.load_table_from_file(source_file, table_id, job_config=job_config)
+                job.dry_run = True
+                job.result()
+                print(f"Dry run completed for {table_id}.")
+            else:
+                load_job = client.load_table_from_file(source_file, table_id, job_config=job_config)
+                load_job.result()
+                print(f"File for year {year} uploaded successfully!")
+        except Exception as e:
+            print(f"Error uploading file for year {year}: {str(e)}")
+            print(f"Review the data in {cleaned_file} and try again.")
+
+def main():
+    client = authenticate_bigquery()
+    create_dataset_if_not_exists(client)
+
+    year_input = input("Enter year(s) to process (comma-separated, e.g., 2013,2014) or 'all': ").strip()
+    if year_input.lower() == "all":
+        years = range(2013, 2025)
+    else:
+        years = [int(y) for y in year_input.split(",")]
+
+    dry_run = input("Perform a dry run (test only, no data written)? (yes/no): ").strip().lower() == "yes"
+
+    for year in years:
+        upload_file_to_bigquery(client, year, dry_run=dry_run)
+
+    print("All selected files processed.")
+
+if __name__ == "__main__":
+    main()
