@@ -1,0 +1,100 @@
+# Calculation of trip duration
+
+#Step 2 in the automated transformation sequence.
+#Calculates the duration in seconds.
+
+#Step summary
+#Step 1 - Timestamp transformation
+#Step 2 - Duration calculation in seconds
+#Step 3 - Basic string calculation
+#Step 4 - Float and Int transformations
+#Step 5 - Specialized Rider-type transformation
+#Step 6 - Specialized xxx_name transformations
+
+#Objective summary
+
+# def to_seconds('duration_raw','start_time or trip_start_time','end_time or trip_end_time')
+# Processed via Step2.py and outputs to yyyy_clean2.csv files
+# Must be done after successful to_timestamp conversion.
+# If "duration_raw' contains data, coerce it to the INT64 datatype and write it to new column 'duration_seconds'. If not, and there is TIMESTAMP data in both 'start_time' and 'end_time', calculate the difference in seconds as an INT64 value, and write it to new column 'duration_seconds'.
+# If successful, drop 'duration_raw'. If not, throw error with the filename and problem cell values for reference. Do not write the output file, but quit the program.
+# Unpaired Empty cells and 'nan' cells to be formatted as SQL NULL value.
+
+import pandas as pd
+import os
+
+def clean_raw_duration(value):
+    """Clean raw_duration values by removing commas and converting to float."""
+    if pd.isna(value):  # Handle missing values
+        return None
+    try:
+        value = str(value).replace(",", "").strip()  # Remove commas and strip whitespace
+        return float(value)  # Convert to float
+    except ValueError:
+        return None  # Return None for invalid values
+
+def calculate_duration(start, end, raw_duration):
+    """Calculate trip duration in seconds with detailed logging."""
+    if pd.isna(start) or pd.isna(end):  # Skip rows with missing timestamps
+        print(f"Invalid timestamps: start={start}, end={end}")
+        return None
+    try:
+        # Use raw_duration if available
+        if pd.notna(raw_duration):
+            return int(raw_duration)
+        # Otherwise, calculate duration from timestamps
+        return int((end - start).total_seconds())
+    except Exception as e:
+        print(f"Error: {e}, start={start}, end={end}, raw_duration={raw_duration}")
+    return None
+
+def process_file(file_path, output_path, log_file):
+    """Process a single file to calculate trip duration in seconds with logging."""
+    file_name = os.path.basename(file_path)
+    print(f"Processing file: {file_name}")
+
+    try:
+        chunk_size = 500000
+        processed_chunks = []
+
+        for chunk in pd.read_csv(file_path, dtype=str, chunksize=chunk_size):
+            print(f"Processing chunk of size {len(chunk)}...")
+
+            # Clean raw_duration column
+            chunk['duration_raw'] = chunk['duration_raw'].apply(clean_raw_duration)
+
+            # Clean and verify timestamps
+            chunk['trip_start_time'] = pd.to_datetime(chunk['trip_start_time'], errors="coerce")
+            chunk['trip_end_time'] = pd.to_datetime(chunk['trip_end_time'], errors="coerce")
+
+            # Calculate duration
+            chunk['duration_seconds'] = chunk.apply(
+                lambda row: calculate_duration(row['trip_start_time'], row['trip_end_time'], row['duration_raw']),
+                axis=1
+            )
+
+            # Log rows with missing duration
+            missing_duration = chunk.loc[chunk['duration_seconds'].isna()]
+            if not missing_duration.empty:
+                with open(log_file, "a") as log:
+                    log.write(f"\nMissing durations in chunk:\n{missing_duration[['trip_start_time', 'trip_end_time', 'duration_raw']]}\n")
+
+            # Drop unused column
+            chunk.drop(columns=['duration_raw'], inplace=True, errors='ignore')
+
+            processed_chunks.append(chunk)
+
+        # Concatenate and save processed data
+        result = pd.concat(processed_chunks)
+        result.to_csv(output_path, index=False)
+        print(f"File saved: {output_path}")
+
+    except Exception as e:
+        print(f"Error processing file {file_name}: {e}")
+
+# Paths and execution
+year = input("Enter year of file to be processed: ")
+input_file = f"input_filepath{year}_clean-1.csv"
+output_file = f"output_filepath{year}_clean-2.csv"
+log_file = f"output_filepath{year}_duration_errors.log"
+process_file(input_file, output_file, log_file)
