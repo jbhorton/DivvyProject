@@ -2,7 +2,10 @@
 #Transform Float and Int transformations.
 
 # Some of the rows must be coerced into FLOAT format. 
-# In the end, the most important column to format this way was the longitude and latitude data.
+# Standardizing columns that should contain FLOAT data. 
+# In the end I limited this to the coordinate data columns.
+# Some cells were a few decimals long, others were high-precision coordinates with many decimals.
+# I chose 5 decimals as a cutoff point to help limit the size of some of these columns.
 # In the end I did not use it for analysis, but at first I thought I might try to make use of the GEOMETRY datatype in BigQuery SQL.
 
 #Step summary
