@@ -1,0 +1,453 @@
+---
+title: "Cyclistic Bike Share Analysis"
+author: "Jacob B Horton"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document:
+    toc: true
+    number_sections: false
+---
+
+# Purpose
+
+The goal for this analysis is to determine differences in ridership behavior between casual and member riders and assess whether revenue generated from casual riders compensates for their lower trip volume.
+
+Our primary business question:
+
+* How do annual members and casual riders use Cyclistic bikes differently?
+
+Secondary questions:
+
+* Why would casual riders buy Cyclistic annual memberships?
+* How can Cyclistic use digital media to influence casual riders to become members?
+
+---
+
+---
+
+# Data and permissions
+
+Cyclistic historical data ranges from 2013 to 2024 and we used as much as we could of it. for trip data we used the full range, for station data we used a subset (2020 to 2024).
+
+Cyclistic ridership data was drawn from the data archives here:
+https://divvy-tripdata.s3.amazonaws.com/index.html
+
+It was lent to us for analysis purposes under the license here:
+https://divvybikes.com/data-license-agreement
+
+---
+
+---
+
+# Process
+Note that I conducted significant new research during this process and consulted various generative AI tools to help me identify processes, arrange syntax, and design code.
+
+## Step 1: Cleaning to align columns
+Some 60 CSV files contained varying and evolving approaches to labeling and organization. To align these, I had to first pull all header names, along with samples of data in each column, from each file. This was done using Python. Once I had an understanding of the data organization, I had to create a high-level standardized organization, aligning headers and datatypes. This was done in Excel.
+
+### Example Python code
+
+```python
+output_rows = []
+
+for column_name, details in column_data.items():
+    row = {
+        "column_name": column_name,
+        "files_appeared_in": "; ".join(details["year_files"]),
+        **details["samples"],  # Spread samples into the row dictionary
+    }
+    output_rows.append(row)
+
+output_df = pd.DataFrame(output_rows)
+
+```
+
+### Sample Spreadsheet data
+
+---
+
+```{r setup_libraries, echo=FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(knitr)
+library(kableExtra)
+
+# The data sample
+my_data <- data.frame(
+  `Source-header` = c("Bike ID", "Local End Time", "Local Start Time"),
+  `Standard-header` = c("id_bike", "end_time", "start_time"),
+  `Source-datatype` = c("INT64", "STRING", "STRING"),
+  `Standard-datatype` = c("FLOAT64", "TIMESTAMP", "TIMESTAMP")
+)
+
+# Display the table properly
+kable(my_data) %>% 
+    kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+
+```
+
+---
+
+## Step 2: Combining files into years and standardizing the columns
+The data was organized into both years and months and I wanted to combine it into fewer CSV files, organized by year, mapping source columns to standardized columns. These files were 2 to 6 million rows long. I used a set of 8 Python transformation programs, each designed to align a single column to a specific datatype, while  also uniformly managing problem values like blank cells or NaN values.
+
+### List of transformation programs run in Python
+1. Timestamp transformation
+2. Duration calculation in seconds
+3. Basic string calculation
+4. Float and Int transformations
+5. Specialized Rider-type transformation
+6. Specialized Station name transformations
+7. Dealing with NULL data
+
+## Step 3: Aggregating granular data to higher-level data
+The source data was organized by individual trips, which is why the datasets were so large. I needed to aggregate this data to higher level insights, such as trips per month.
+
+I used Python and a few API tools to upload the 12 annual files to BigQuery. There, I used SQL statements to UNION the data into my desired, higher-level data groups.
+
+### Sample SQL statements
+
+---
+
+```sql
+    -- 2024 Arrivals
+    SELECT 
+        rider_type,
+        TRIM(CAST(id_end_station AS STRING)) AS station_id,  
+        'arrival' AS trip_type,  
+        EXTRACT(YEAR FROM trip_end_time) AS year_num,
+        EXTRACT(MONTH FROM trip_end_time) AS month_num,
+        EXTRACT(DAYOFWEEK FROM trip_end_time) AS day_num,
+        duration_seconds
+    FROM `divvy-analysis-aggregat.2024_trips`
+    WHERE duration_seconds BETWEEN 0 AND 12000 
+    AND rider_type != 'dependent'
+)
+SELECT 
+    rider_type,
+    station_id,
+    trip_type,  
+    year_num, 
+    month_num,
+    day_num,
+    COUNT(*) AS total_trips, 
+    AVG(duration_seconds) AS avg_trip_duration,
+    MAX(duration_seconds) AS max_trip_duration,
+    MIN(duration_seconds) AS min_trip_duration
+FROM combined_trips
+GROUP BY rider_type, station_id, trip_type, year_num, month_num, day_num
+ORDER BY year_num DESC, month_num DESC, day_num
+
+```
+
+---
+
+## Step 4: Second round of cleaning
+Once I had smaller, higher-level data files, I was able to identify problems in the data that I could not recognize at a lower level due to time, processing, and storage constraints. This process involved making certain key values uniform, reference, average, and sum columns. I did this cleaning in Excel.
+
+### Sample from a cleaned, higher-level spreadsheet
+
+---
+
+```{r setup_data, echo=FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(knitr)
+library(kableExtra)
+
+# The data sample
+my_data <- data.frame(
+  `rider_type` = c("member", "member", "casual"),
+  `year` = c(2024,2017,2020),
+  `month_num` = c(8,5,2),
+  `day_num` = c(1,7,4),
+  `hour_num` = c(11,14,20),
+  `trips_total` = c(3386,2859,976),
+  `duration_avg_secs` = c(874.7,934.5,1345.2)
+)
+
+# Display the table properly
+kable(my_data) %>% 
+    kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+
+```
+
+---
+
+## Step 5: Visualization
+Once the aggregated datesets were cleaned, the could be uploaded intl RStudio for analysis and visualization. This document is the end product of visualization created using the RMarkdown library in RStudio.
+
+# Behavior of casual riders and members
+## How many trips do rider groups take?
+
+---
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+library(ggplot2)
+library(dplyr)
+library(scales)
+
+rider_trips <- read.csv("rider-rides_v2.csv")
+station_trips <- read.csv("station-rides.csv")
+
+# Summarize monthly trip volume by rider type
+monthly_trends <- rider_trips %>%
+    group_by(rider_type, month_num) %>%  # Group by month_num for ordering
+    summarize(
+        trips_total = sum(trips_total), 
+        Avg.Duration = mean(duration_avg_secs / 60),  # Convert duration to minutes
+        .groups = "drop"
+    ) %>%
+    mutate(month_abb = factor(month_num, levels = 1:12, labels = month.abb))  # Create ordered factor
+
+# Summarize daily rides by rider type
+daily_trends <- rider_trips %>%
+    group_by(rider_type, day_num) %>%  # Group by day of the week
+    summarize(
+        trips_total = sum(trips_total),  # Total trips across all years
+        Avg.Trips = mean(trips_total),   # Average trips per day (per year)
+        Avg.Duration = mean(duration_avg_secs / 60),  # Convert duration to minutes
+        .groups = "drop"
+    ) %>%
+    mutate(day_abb = factor(day_num, levels = 1:7, labels = c("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")))  # Ordered weekdays
+
+# Plot monthly trends by total Trips
+ggplot(monthly_trends, aes(x = month_abb, y = trips_total, color = rider_type, group = rider_type)) +
+    geom_line(size = 1.2) +
+    geom_point(size = 3) +
+    scale_y_continuous(labels = scales::comma) +  # Format y-axis with commas
+    labs(
+        title = "Trips per month",
+        x = "Month",
+        y = "Total Trips",
+        color = "Rider Type"
+    ) +
+    theme_minimal()
+
+# Plot daily trends by total Trips
+ggplot(daily_trends, aes(x = day_abb, y = trips_total, color = rider_type, group = rider_type)) +
+    geom_line(size = 1.2) +
+    geom_point(size = 3) +
+    scale_y_continuous(labels = scales::comma) +  # Format y-axis with commas
+    labs(
+        title = "Trips per day",
+        x = "Day of the Week",
+        y = "Total Rides",
+        color = "Rider Type"
+    ) +
+    theme_minimal()
+
+```
+
+---
+
+### Notes on trip volume
+
+Members take more total trips than casual members, all week long and all year long. This suggests a simple explanation: Members ride for practical, habitual reasons, back and forth, such as commuting to and from work.
+
+---
+
+## How long do they ride on each trip?
+
+``` {r, echo=FALSE, message=FALSE, warning=FALSE}
+
+# Plot monthly trends by duration
+ggplot(monthly_trends, aes(x = month_abb, y = Avg.Duration, color = rider_type, group = rider_type)) +
+    geom_line(size = 1.2) +
+    geom_point(size = 3) +
+    scale_y_continuous(labels = scales::comma) +  # Format y-axis with commas
+    labs(
+        title = "Trip duration by month",
+        x = "Month",
+        y = "Ride duration in minutes",
+        color = "Rider Type"
+    ) +
+    theme_minimal()
+
+# Plot daily trends by duration
+ggplot(daily_trends, aes(x = day_abb, y = Avg.Duration, color = rider_type, group = rider_type)) +
+    geom_line(size = 1.2) +
+    geom_point(size = 3) +
+    scale_y_continuous(labels = scales::comma) +  # Format y-axis with commas
+    labs(
+        title = "Trip duration by day",
+        x = "Day of the Week",
+        y = "Duration of trip in minutes",
+        color = "Rider Type"
+    ) +
+    theme_minimal()
+
+```
+
+---
+
+## What can we learn from station data?
+
+---
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+# Aggregate arrivals and departures together
+top_stations <- station_trips %>%
+    group_by(rider_type, station_name) %>%
+    summarize(trips_total = sum(trips_total), .groups = "drop") %>%
+    arrange(desc(trips_total)) %>%
+    slice_head(n = 20) %>%  # Top 20 stations
+    mutate(station_name = factor(station_name, levels = unique(station_name)))  # Ensure ordering
+
+# Plot total trips for top stations without trip type distinction
+ggplot(top_stations, aes(x = station_name, y = trips_total, fill = rider_type)) +
+    geom_bar(stat = "identity", position = "dodge") +
+    scale_y_continuous(labels = scales::comma) +
+    labs(
+        title = "Top 20 Stations by total traffic",
+        x = NULL,  # Removes "Station Name" label from x-axis
+        y = "Total Trips",
+        fill = "Rider Type"  # Legend now distinguishes casual vs. member
+    ) +
+    theme_minimal() +
+    theme(
+        axis.text.x = element_text(angle = 90, hjust = 1, vjust = 1, size = 8),  # Tilt and adjust size
+        axis.text.y = element_text(size = 8),  # Adjust y-axis label size
+        axis.title.x = element_blank()  # Ensures no x-axis label is displayed
+    )
+```
+
+---
+
+### Station data underlines emerging casual rider hypotheses
+
+Trip data show us that Casual riders take more rides on weekends and during warm months. Duration data shows us that casual riders also take much longer rides.
+
+When we look at station traffic, we see that Streeter and Grand station and Millennium Park are the highest traffic stations. These stations are located at the heart of a waterside entertainment and public park district.
+
+All of this suggests that casual riders use the service most often for entertainment and leisure activities rather than a daily commute.
+
+---
+
+# What is the bottom line?
+
+If Casual riders take fewer rides, but for a longer time, does the revenue balance against members, who ride more regularly, but for less time?
+
+---
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+library(dplyr)
+library(ggplot2)
+library(scales)
+
+# Define pricing model
+price_per_minute <- 0.35  # Arbitrary rate per minute
+
+# Compute Annual Income (SUM of Trips)
+annual_income <- rider_trips %>%
+    group_by(rider_type, year) %>%
+    summarize(
+        avg_duration = mean(duration_avg_secs, na.rm=TRUE) / 60,  # Convert secs to mins
+        total_trips = sum(trips_total, na.rm=TRUE),  # SUM instead of mean
+        estimated_income = avg_duration * price_per_minute * total_trips,  
+        .groups = "drop"
+    )
+
+# Compute Monthly Income (SUM of Trips)
+monthly_income <- rider_trips %>%
+    group_by(rider_type, month_num) %>%
+    summarize(
+        avg_duration = mean(duration_avg_secs, na.rm=TRUE) / 60,  
+        total_trips = sum(trips_total, na.rm=TRUE),  # SUM instead of mean
+        estimated_income = avg_duration * price_per_minute * total_trips,  
+        .groups = "drop"
+    )
+
+# Compute Daily Income (SUM of Trips by Day of Week)
+daily_income <- rider_trips %>%
+    group_by(rider_type, day_num) %>%
+    summarize(
+        avg_duration = mean(duration_avg_secs, na.rm=TRUE) / 60,  # Convert secs to mins
+        total_trips = sum(trips_total, na.rm=TRUE),  # SUM instead of mean
+        estimated_income = avg_duration * price_per_minute * total_trips,  
+        .groups = "drop"
+    ) %>%
+    mutate(day_abb = factor(day_num, levels = 1:7, labels = c("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")))
+
+# Print Annual data
+print(
+  ggplot(annual_income, aes(x = factor(year), y = estimated_income, fill = rider_type)) +
+    geom_bar(stat = "identity", position = "dodge") +
+    scale_y_continuous(labels = dollar) +
+    labs(
+        title = "Annual income estimates",
+        x = "Year",
+        y = "Total Estimated Income ($)",
+        fill = "Rider Type"
+    ) +
+    theme_minimal()
+)
+# Print monthly data
+print(
+  ggplot(monthly_income, aes(x = factor(month_num, levels = 1:12, labels = month.abb), 
+                           y = estimated_income, fill = rider_type)) +
+    geom_bar(stat = "identity", position = "dodge") +
+    scale_y_continuous(labels = dollar) +
+    labs(
+        title = "Monthly estimates across an average year",
+        x = "Month",
+        y = "Total Estimated Income ($)",
+        fill = "Rider Type"
+    ) +
+    theme_minimal()
+)
+#Print daily data
+print(
+ggplot(daily_income, aes(x = day_abb, y = estimated_income, fill = rider_type)) +
+    geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+    scale_y_continuous(labels = dollar) +
+    labs(
+        title = "Daily estimates across an average year",
+        x = "Day of the Week",
+        y = "Total Estimated Income ($)",
+        fill = "Rider Type"
+    ) +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate labels for readability
+)
+
+```
+
+---
+
+# Answering questions
+### How do annual members and casual riders use Cyclistic bikes differently?
+
+* Members ride more frequently but for less time. This suggests they use the service as part of their routine, to commute to and from their homes and work, or for running errands.
+
+* Casual riders primarily take trips on the weekends, during warmer months, and for longer periods of time. Likely, the service is part of their relaxation and free time.
+
+### Why would casual riders buy Cyclistic annual memberships?
+
+1. Do we want to commit to a conversion strategy?
+
+For 5 of our most lucrative months, May to September, Casual riders are the leading source of revenue. Do we really want to alter the leading revenue group during the high revenue season so that we have a few more riders in the low revenue season? Is it worth the marketing dollars?
+
+2. We should test the viability of conversion.
+
+Casual riders may discover through targeted advertising and incentives that the service will fit into their routine. On the other hand, they may not want to think about their routine while riding for pleasure. These riders may find the service best suits them as a leisure activity rather than a commuter activity. Some may live to far to commute by bike, others may be tourists or seasonal residents. And keep in mind the value of the Casual rider to our historical revenue trends. We need to know more about those willing to bridge from Casual to Member.
+
+### How can Cyclistic use digital media to influence casual riders to become member
+
+1. Test conversion effectiveness.
+ * Identify Casual riders and prepare a markeint campaign.
+ * Reach out to the Casual rider as the peak Casual months come to a close (August and September) as well as on Sundays as the work week begins. Emphasize benefits including the wide distribution of stations throughout the city, the health and convenience benefits of regular cycling, and the cost savings. Offer incentives for conversion. 
+ * Track the conversion effectiveness and tweak messaging to improve conversion. Track the historical and post-conversion behavior of the converted users. Run another analysis against the general trends of Casual riders and Members. Are the Converted riders positively affecting revenue during peak months? During down months?
+
+2. Consider encouraging the Casual rider pool
+ * Invest in advertising campaigns targeted at Casual and Non-riders who use competing transportation methods. Lean into the existing trends.
+ * Run campaigns during March and April with the aim of ramping-up for the high income months. d
+ * Run end-of-week campaigns and incentives to encourage even more Casual ridership on weekends.
+ * Emphasize city attractions, hidden gems, emerging hot spots, and the joys of longer trips with friends and family.
+ * Differentiate messaging between the city visitor and the city resident.
+
+# Questions and comments are welcome!
+
+---
+
