@@ -1,0 +1,165 @@
+# Organize the aggregated year files so that they all featured standardized headers.
+
+import pandas as pd
+import os
+import logging
+
+# Configure logging
+logging.basicConfig(filename="data_processing.log", level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
+# Header mappings and output headers
+header_reference = {
+    '01 - Rental Details Bike ID':'id_bike',
+    '01 - Rental Details Duration In Seconds Uncapped':'duration_raw',
+    '01 - Rental Details Local End Time':'end_time',
+    '01 - Rental Details Local Start Time':'start_time',
+    '01 - Rental Details Rental ID':'id_trip',
+    '02 - Rental End Station ID':'id_end_station',
+    '02 - Rental End Station Name':'name_end_station',
+    '03 - Rental Start Station ID':'id_start_station',
+    '03 - Rental Start Station Name':'name_start_station',
+    '05 - Member Details Member Birthday Year':'rider_bday',
+    'bikeid':'id_bike',
+    'birthday':'rider_bday',
+    'birthyear':'rider_bday',
+    'end_lat':'lat_end_station',
+    'end_lng':'lng_end_station',
+    'end_station_id':'id_end_station',
+    'end_station_id':'id_end_station',
+    'end_station_name':'name_end_station',
+    'end_time':'end_time',
+    'ended_at':'end_time',
+    'from_station_id':'id_start_station',
+    'from_station_name':'name_start_station',
+    'gender':'rider_gender',
+    'Member Gender':'rider_gender',
+    'member_casual':'rider_type',
+    'ride_id':'id_trip',
+    'rideable_type':'rideable_type',
+    'start_lat':'lat_start_station',
+    'start_lng':'lng_start_station',
+    'start_station_id':'id_start_station',
+    'start_station_id':'id_start_station',
+    'start_station_id':'id_start_station',
+    'start_station_name':'name_start_station',
+    'start_time':'start_time',
+    'started_at':'start_time',
+    'starttime':'start_time',
+    'stoptime':'end_time',
+    'to_station_id':'id_end_station',
+    'to_station_name':'name_end_station',
+    'trip_id':'id_trip',
+    'tripduration':'duration_raw',
+    'tripduration':'duration_raw',
+    'User Type':'rider_type',
+    'User Type':'rider_type',
+    'usertype':'rider_type'
+}
+
+output_headers = [
+    'id_bike', 'duration_raw', 'end_time', 'start_time', 'id_trip', 'id_end_station',
+    'name_end_station', 'id_start_station', 'name_start_station', 'rider_bday',
+    'lat_end_station', 'lng_end_station', 'rider_gender', 'rider_type',
+    'rideable_type', 'lat_start_station', 'lng_start_station'
+]
+
+
+def load_source_by_year(csv_file):
+    """Load the source file mappings from a CSV file."""
+    try:
+        script_dir = os.getcwd()  # Get the current working directory
+        csv_file_path = os.path.join(script_dir, csv_file)
+
+        # Read the CSV file into a DataFrame
+        df = pd.read_csv(csv_file_path)
+        logging.info(f"Loaded year-group mappings from {csv_file_path}")
+
+        # Ensure columns are stripped of leading/trailing whitespace
+        df['year'] = df['year'].astype(int)  # Ensure year is an integer
+        df['filename'] = df['filename'].str.strip()
+
+        # Create a dictionary where keys are years and values are lists of filenames
+        source_by_year = df.groupby('year')['filename'].apply(list).to_dict()
+        logging.info(f"Source files by year: {source_by_year}")
+        return source_by_year
+    except Exception as e:
+        logging.error(f"Error loading year-group mappings from {csv_file}: {e}")
+        return {}
+
+def align_headers(source_file, header_reference, output_headers):
+    """Align headers from the source file to standardized output headers."""
+    try:
+        if not os.path.exists(source_file):
+            logging.error(f"Source file not found: {source_file}")
+            return pd.DataFrame(columns=output_headers)
+
+        # Load the source file
+        df = pd.read_csv(source_file)
+        logging.info(f"Loaded file {source_file} with {len(df)} rows")
+        logging.info(f"Source file headers: {df.columns.tolist()}")
+
+        # Rename columns based on header_reference
+        df = df.rename(columns=header_reference)
+
+        # Ensure all output_headers are present in the DataFrame
+        for col in output_headers:
+            if col not in df.columns:
+                df[col] = None  # Add missing columns as NULL
+
+        # Reorder columns to match output_headers
+        df = df[output_headers]
+        logging.info(f"DataFrame after header alignment for {source_file}:\n{df.head()}")
+        return df
+    except Exception as e:
+        logging.error(f"Error processing file {source_file}: {e}")
+        return pd.DataFrame(columns=output_headers)
+
+
+def process_files(years, source_by_year):
+    """Process files for the selected years."""
+    script_dir = os.getcwd()  # Get the current working directory
+
+    for year in years:
+        if year not in source_by_year:
+            logging.error(f"No files found for year {year}")
+            continue
+
+        output_file = os.path.join(script_dir, f"{year}_grouped.csv")
+        combined_data = pd.DataFrame(columns=output_headers)
+
+        for source_file in source_by_year.get(year, []):
+            source_file_path = os.path.join(script_dir, source_file)
+
+            if not os.path.exists(source_file_path):
+                logging.error(f"File not found: {source_file_path}")
+                continue
+
+            logging.info(f"Found file: {source_file_path}")  # Log the file path
+
+            try:
+                logging.info(f"Processing file: {source_file_path}")
+                df = align_headers(source_file_path, header_reference, output_headers)
+                if df.empty:
+                    logging.warning(f"File {source_file_path} produced an empty DataFrame")
+                    continue
+
+                combined_data = pd.concat([combined_data, df], ignore_index=True)
+            except Exception as e:
+                logging.error(f"Error processing file {source_file_path} for year {year}: {e}")
+
+        if not combined_data.empty:
+            combined_data.to_csv(output_file, index=False)
+            logging.info(f"Saved processed data for year {year} to {output_file}")
+        else:
+            logging.warning(f"No data processed for year {year}, skipping output file creation")
+
+if __name__ == "__main__":
+    # Load the source_by_year mapping from the new CSV file
+    source_by_year_csv = "year-groups.csv"
+    source_by_year = load_source_by_year(source_by_year_csv)
+
+    years_to_process = input("Enter years to process (comma-separated, e.g., 2013,2014): ")
+    years_to_process = [int(year.strip()) for year in years_to_process.split(",")]
+
+    process_files(years_to_process, source_by_year)
+
