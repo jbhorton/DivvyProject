@@ -1,0 +1,61 @@
+# the user birthday column, which is not used in most years, became troublesome. This was an attempt to clean that up. 
+
+import pandas as pd
+import os
+
+# Define directories
+INPUT_DIR = r"input_filepath"
+OUTPUT_DIR = r"output_filepath"
+
+# Ensure the output directory exists
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+def process_rider_bday(row, file_year):
+    """Transform `rider_bday` column based on the given schema."""
+    try:
+        # Convert to integer and validate range
+        year = int(row)
+        if file_year - 90 <= year <= file_year - 5:
+            return year
+        else:
+            return "NULL"  # Invalid years
+    except (ValueError, TypeError):
+        return "NULL"  # Handle empty or non-integer values
+
+def process_file(file_path, output_path, file_year):
+    """Process a single file to transform `rider_bday`."""
+    print(f"Processing file: {file_path}")
+
+    try:
+        # Load file into memory
+        df = pd.read_csv(file_path, dtype=str)
+
+        # Apply transformation to `rider_bday`
+        df['rider_bday'] = df['rider_bday'].apply(process_rider_bday, file_year=file_year)
+
+        # Save the processed file
+        df.to_csv(output_path, index=False)
+        print(f"File saved: {output_path}")
+
+    except Exception as e:
+        print(f"Error processing file {file_path}: {e}")
+
+def main():
+    # Prompt user for year(s)
+    year_input = input("Enter year(s) to process (comma-separated, e.g., 2013,2014) or 'all': ").strip()
+    if year_input.lower() == "all":
+        years = range(2013, 2025)  # Adjust based on your dataset range
+    else:
+        years = [int(year) for year in year_input.split(",")]
+
+    for year in years:
+        input_file = os.path.join(INPUT_DIR, f"{year}_bday-clean.csv")
+        output_file = os.path.join(OUTPUT_DIR, f"{year}_trips.csv")
+
+        if os.path.exists(input_file):
+            process_file(input_file, output_file, year)
+        else:
+            print(f"File not found: {input_file}. Skipping.")
+
+if __name__ == "__main__":
+    main()
