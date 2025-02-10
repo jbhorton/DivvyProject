@@ -1,0 +1,135 @@
+# Timestamp cleanup
+
+#Step 1 in the automated transformation sequence.
+#Modifies the timestamp.
+
+#Step summary
+#Step 1 - Timestamp transformation
+#Step 2 - Duration calculation in seconds
+#Step 3 - Basic string calculation
+#Step 4 - Float and Int transformations
+#Step 5 - Specialized Rider-type transformation
+#Step 6 - Specialized xxx_name transformations
+
+#Objective summary
+
+# def to_timestamp('start_time','end_time')
+# Processed via Step1.py and outputs to yyyy_clean-1.csv files
+# Coerce the column into the TIMESTAMP SQL datatype similar to '2013-06-27 15:05:00 UTC'. Assume all data is UTC unless it states otherwise. If possible overwrite the old columns. If not possible, write to new columns 'trip_start_time' and 'trip_end_time' and drop the original columns.
+# Potential source format Cases to be standardized:
+# Case 1: yyyy-mm-dd hh:mm:ss
+# Case 2: mm/dd/yyyy hh:mm:ss
+# Case 3: mm/dd/yyyy hh:mm
+# Case 4: yyyy-mm-dd hh:mm:ss.fff
+# Case 5: yyyy-mm-dd hh:mm
+# Empty rows or 'nan' rows should be converted to NULL SQL value. Log coercion errors with year, file name, column name, and sample problem data.
+# If successful, drop 'start_time' and 'end_time', if not, throw error with the filename and problem cell value for reference. Do not write the output file, but quit the program.
+# Empty cells and 'nan' cells to be formatted as SQL NULL value.
+
+import pandas as pd
+import os
+
+def to_timestamp(value, column_name, log_file):
+    """Convert to TIMESTAMP format, or NULL if invalid."""
+    # Check for empty or nan values
+    if pd.isna(value) or value.strip() == "":
+        with open(log_file, "a") as log:
+            log.write(f"Missing {column_name}: {value}\n")
+        return "NULL"  # Use 'NULL' as a placeholder for missing timestamps
+
+    # Strip spaces and clean value
+    value = str(value).strip()
+
+    # Predefined formats
+    formats = [
+        "%Y-%m-%d %H:%M:%S",
+        "%m/%d/%Y %H:%M:%S",
+        "%m/%d/%Y %H:%M",  # Matches your sample
+        "%m/%d/%Y %I:%M %p",
+        "%m/%d/%Y %I:%M:%S %p",
+        "%Y-%m-%d %H:%M:%S.%f",
+    ]
+
+    # Attempt conversion using formats
+    for fmt in formats:
+        try:
+            return pd.to_datetime(value, format=fmt).strftime("%Y-%m-%d %H:%M:%S UTC")
+        except ValueError:
+            continue
+
+    # Fallback: Use Pandas automatic parsing
+    try:
+        parsed = pd.to_datetime(value, errors="coerce")
+        if pd.notna(parsed):
+            return parsed.strftime("%Y-%m-%d %H:%M:%S UTC")
+    except Exception:
+        pass
+
+    # Log problematic values
+    with open(log_file, "a") as log:
+        log.write(f"Failed to parse {column_name} at value: {value}\n")
+    return "NULL"
+
+
+def process_file(file_path, output_path, log_file, missing_data_file):
+    """Process a single file to convert timestamps with handling for missing data."""
+    file_name = os.path.basename(file_path)
+    print(f"Processing file: {file_name}")
+
+    try:
+        # Load the file in chunks
+        chunk_size = 500000
+        processed_chunks = []
+        missing_rows = []
+
+        for chunk in pd.read_csv(file_path, dtype=str, chunksize=chunk_size):
+            print(f"Processing chunk of size {len(chunk)}...")
+
+            # Apply timestamp conversion
+            chunk['trip_start_time'] = chunk['start_time'].apply(
+                lambda x: to_timestamp(x, "start_time", log_file)
+            )
+            chunk['trip_end_time'] = chunk['end_time'].apply(
+                lambda x: to_timestamp(x, "end_time", log_file)
+            )
+
+            # Separate rows with missing timestamps
+            missing = chunk[(chunk['trip_start_time'].isna()) | (chunk['trip_end_time'].isna())]
+            missing_rows.append(missing)
+
+            # Keep only rows with valid timestamps
+            chunk = chunk.dropna(subset=['trip_start_time', 'trip_end_time'])
+
+            # Drop original columns
+            chunk.drop(columns=['start_time', 'end_time'], inplace=True, errors='ignore')
+
+            processed_chunks.append(chunk)
+
+        # Concatenate all processed chunks
+        if processed_chunks:
+            result = pd.concat(processed_chunks)
+            result.to_csv(output_path, index=False)
+            print(f"File saved: {output_path}")
+        else:
+            print("No valid rows to process. Output file not saved.")
+
+        # Save missing rows to a separate file
+        if missing_rows:
+            missing_data = pd.concat(missing_rows)
+            missing_data.to_csv(missing_data_file, index=False)
+            print(f"Missing rows saved to {missing_data_file}")
+
+    except Exception as e:
+        print(f"Error processing file {file_name}: {e}")
+
+# Run the transformation
+year = input("Enter year of file to be processed: ")
+
+# File paths
+input_file = f"input_filepath{year}_grouped.csv"
+output_file = f"output_filepath{year}_clean-1.csv"
+log_file = f"output_filepath{year}_timestamp_errors.log"
+missing_data_file = f"output_filepath{year}_missing_rows.csv"
+
+# Run the file processing function
+process_file(input_file, output_file, log_file, missing_data_file)
