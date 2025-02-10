@@ -1,0 +1,85 @@
+# Step 6 in the automated transformation sequence.
+# Name transformation.
+
+# This is a problem file because it does not solve the issue.
+# When standardizing the Station columns, I found there was a lot of variation.
+# Some of these transformations actually belong in the station_id column, not the Station names columns.
+
+#Step summary
+#Step 1 - Timestamp transformation
+#Step 2 - Duration calculation in seconds
+#Step 3 - Basic string calculation
+#Step 4 - Float and Int transformations
+#Step 5 - Specialized Rider-type transformation
+#Step 6 - Specialized xxx_name transformations
+
+# Objective summary
+
+#def to_name('column')
+# Processed via Step6.py and outputs yyyy_clean6.py
+# Check all source data against the Cases and convert when there is a match. Otherwise, coerce all data to a cleaned and trimmed STRING datatype, just as it appears originally.
+# Case 1: 'Hubbard Bike-checking (LBS-WH-TEST)' : 'Test'
+# Case 2: 'DIVVY CASSETTE REPAIR MOBILE STATION' : 'Repair'
+# Case 3: String beginning with 'chargingstx' + any following number :  'Charging'
+# Do not alter calitaplization beyond the Cases.
+# If possible overwrite the old columns. If not possible, write to new columns prefixed with 'user_' instead of 'rider_' and drop the original columns.
+# Empty cells and 'nan' cells to be formatted as SQL NULL value.
+
+import pandas as pd
+import os
+
+def to_name(value):
+    """Standardize station names."""
+    mapping = {
+        "Hubbard Bike-checking (LBS-WH-TEST)": "Test",
+        "DIVVY CASSETTE REPAIR MOBILE STATION": "Repair"
+    }
+    if pd.isna(value):
+        return None
+    # Check for specific cases
+    if value in mapping:
+        return mapping[value]
+    # Handle generic case for charging stations
+    if value.lower().startswith("chargingstx"):
+        return "Charging"
+    # Return trimmed and cleaned value otherwise
+    return str(value).strip()
+
+def process_file(file_path, output_path):
+    """Process a single file for station name transformations."""
+    file_name = os.path.basename(file_path)
+    print(f"Processing file: {file_name}")
+
+    try:
+        # Load in chunks to reduce memory usage
+        chunk_size = 500000  # Adjust based on available memory
+        processed_chunks = []
+
+        for chunk in pd.read_csv(file_path, dtype=str, chunksize=chunk_size):
+            print(f"Processing chunk of size {len(chunk)}...")
+
+            # Apply transformations
+            chunk['name_end_station'] = chunk['name_end_station'].apply(to_name)
+            chunk['name_start_station'] = chunk['name_start_station'].apply(to_name)
+
+            processed_chunks.append(chunk)
+
+        # Concatenate all processed chunks
+        result = pd.concat(processed_chunks)
+
+        # Save to output file
+        result.to_csv(output_path, index=False)
+        print(f"File saved: {output_path}")
+
+    except Exception as e:
+        print(f"Error processing file {file_name}: {e}")
+
+# Run the transformation
+year = input("Enter year of file to be processed: ")
+
+# File paths
+input_file = f"input_filepath{year}_clean-5.csv"
+output_file = f"output_filepath{year}_clean-6.csv"
+
+# Run the file processing function
+process_file(input_file, output_file)
