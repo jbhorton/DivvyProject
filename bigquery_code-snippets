@@ -1,0 +1,243 @@
+-- New SQL Notes
+-- I found that a safe cutoff point for extreme cases which caused calculation isses was to cut values outside the 0 and 12,000 second range and the confusing "dependent" rider type.
+-- Create an analysis view hinging on rider_type and filtering extreme cases
+
+WITH combined_trips AS (
+    SELECT 
+        rider_type, 
+        EXTRACT(YEAR FROM trip_start_time) AS year,
+        EXTRACT(MONTH FROM trip_start_time) AS month,
+        EXTRACT(DAYOFWEEK FROM trip_start_time) AS weekday,
+        EXTRACT(HOUR FROM trip_start_time) AS hour,
+        duration_seconds
+    FROM `project.2013_trips`
+    WHERE duration_seconds < 12000 AND duration_seconds > 0 AND rider_type != "dependent"
+    UNION ALL
+    SELECT 
+        rider_type, 
+        EXTRACT(YEAR FROM trip_start_time) AS year,
+        EXTRACT(MONTH FROM trip_start_time) AS month,
+        EXTRACT(DAYOFWEEK FROM trip_start_time) AS weekday,
+        EXTRACT(HOUR FROM trip_start_time) AS hour,
+        duration_seconds
+    FROM `project.2014_trips`
+    WHERE duration_seconds < 12000 AND duration_seconds > 0 AND rider_type != "dependent" 
+    UNION ALL
+    ...
+    -- Repeat for all tables up to 2024
+    FROM `project.2024_trips`
+    WHERE duration_seconds < 12000 AND duration_seconds > 0 AND rider_type != "dependent"
+)
+SELECT 
+    rider_type, 
+    year, 
+    month,
+    weekday,
+    hour,
+    COUNT(*) AS total_rides,
+    AVG(duration_seconds) AS avg_trip_duration,
+    MAX(duration_seconds) AS max_trip_duration,
+    MIN(duration_seconds) AS min_trip_duration
+FROM combined_trips
+GROUP BY rider_type, year, month, weekday, hour
+ORDER BY year DESC, month DESC, weekday, hour;
+
+-- Checking if my cutoff points for those extreme cases significantly affected the data
+
+WITH yearly_trip_counts AS (
+    SELECT 
+        EXTRACT(YEAR FROM trip_start_time) AS year,
+        COUNT(*) AS total_trips,
+        SUM(CASE WHEN duration_seconds < 0 OR duration_seconds > 12000 THEN 1 ELSE 0 END) AS extreme_trips
+    FROM (
+        SELECT trip_start_time, duration_seconds FROM `project.2013_trips`
+        UNION ALL
+        SELECT trip_start_time, duration_seconds FROM `project.2014_trips`
+        UNION ALL
+        ...
+        SELECT trip_start_time, duration_seconds FROM `project.2024_trips`
+        -- Repeat for all tables up to 2024
+    ) AS all_trips
+    GROUP BY year
+)
+SELECT 
+    year,
+    total_trips,
+    extreme_trips,
+    ROUND((extreme_trips * 100.0) / total_trips, 2) AS extreme_trip_percentage
+FROM yearly_trip_counts
+ORDER BY year DESC;
+
+-- First attempt to develop the Station-based insight table
+
+WITH combined_trips AS (
+    -- Departures (Starting Station)
+    SELECT 
+        rider_type,
+        TRIM(CAST(id_start_station AS STRING)) AS station_id,  
+        'departure' AS trip_type,  
+        EXTRACT(YEAR FROM trip_start_time) AS year,
+        EXTRACT(MONTH FROM trip_start_time) AS month,
+        EXTRACT(DAYOFWEEK FROM trip_start_time) AS weekday,
+        duration_seconds
+    FROM `project.2020_trips`
+    WHERE duration_seconds BETWEEN 1 AND 12000 AND rider_type != 'dependent'
+
+    UNION ALL
+
+    -- Arrivals (Ending Station)
+    SELECT 
+        rider_type,
+        TRIM(CAST(id_end_station AS STRING)) AS station_id,  
+        'arrival' AS trip_type,  
+        EXTRACT(YEAR FROM trip_start_time) AS year,
+        EXTRACT(MONTH FROM trip_start_time) AS month,
+        EXTRACT(DAYOFWEEK FROM trip_start_time) AS weekday,
+        duration_seconds
+    FROM `project.2020_trips`
+    WHERE duration_seconds BETWEEN 1 AND 12000 AND rider_type != 'dependent'
+
+    UNION ALL
+
+    -- Repeat for all tables up to 2024
+    SELECT 
+        rider_type,
+        TRIM(CAST(id_start_station AS STRING)) AS station_id,  
+        'departure' AS trip_type,  
+        EXTRACT(YEAR FROM trip_start_time) AS year,
+        EXTRACT(MONTH FROM trip_start_time) AS month,
+        EXTRACT(DAYOFWEEK FROM trip_start_time) AS weekday,
+        duration_seconds
+    FROM `project.2021_trips`
+    WHERE duration_seconds BETWEEN 1 AND 12000 AND rider_type != 'dependent'
+)
+
+-- Exporting results to a table instead of loading in UI
+CREATE OR REPLACE TABLE `table` AS
+SELECT 
+    rider_type,
+    station_id,
+    trip_type,  
+    year, 
+    month,
+    weekday,
+    COUNT(*) AS total_trips, 
+    APPROX_COUNT_DISTINCT(station_id) AS unique_stations,
+    AVG(duration_seconds) AS avg_trip_duration,
+    MAX(duration_seconds) AS max_trip_duration,
+    MIN(duration_seconds) AS min_trip_duration
+FROM combined_trips
+GROUP BY rider_type, station_id, trip_type, year, month, weekday;
+
+-- Second attempt to develop station-based insights table:
+
+WITH combined_trips AS (
+    -- Departures (Starting Station)
+    SELECT 
+        rider_type,
+        TRIM(CAST(id_start_station AS STRING)) AS station_id,  
+        'departure' AS trip_type,  
+        EXTRACT(YEAR FROM trip_start_time) AS year,
+        EXTRACT(MONTH FROM trip_start_time) AS month,
+        EXTRACT(DAYOFWEEK FROM trip_start_time) AS weekday,
+        duration_seconds
+    FROM `project.2020_trips`
+    WHERE duration_seconds BETWEEN 1 AND 12000 
+    AND rider_type != 'dependent'
+
+    UNION ALL
+
+    -- Arrivals (Ending Station)
+    SELECT 
+        rider_type,
+        TRIM(CAST(id_end_station AS STRING)) AS station_id,  
+        'arrival' AS trip_type,  
+        EXTRACT(YEAR FROM trip_start_time) AS year,
+        EXTRACT(MONTH FROM trip_start_time) AS month,
+        EXTRACT(DAYOFWEEK FROM trip_start_time) AS weekday,
+        duration_seconds
+    FROM `project.2020_trips`
+    WHERE duration_seconds BETWEEN 1 AND 12000 
+    AND rider_type != 'dependent'
+
+    UNION ALL
+
+    -- Repeat for 2021–2024
+    SELECT 
+        rider_type,
+        TRIM(CAST(id_start_station AS STRING)) AS station_id,  
+        'departure' AS trip_type,  
+        EXTRACT(YEAR FROM trip_start_time) AS year,
+        EXTRACT(MONTH FROM trip_start_time) AS month,
+        EXTRACT(DAYOFWEEK FROM trip_start_time) AS weekday,
+        duration_seconds
+    FROM `project.2024_trips`
+    WHERE duration_seconds BETWEEN 1 AND 12000 
+    AND rider_type != 'dependent'
+)
+SELECT 
+    rider_type,
+    station_id,
+    trip_type,  
+    year, 
+    month,
+    weekday,
+    COUNT(*) AS total_trips, 
+    AVG(duration_seconds) AS avg_trip_duration,
+    MAX(duration_seconds) AS max_trip_duration,
+    MIN(duration_seconds) AS min_trip_duration
+FROM combined_trips
+GROUP BY rider_type, station_id, trip_type, year, month, weekday
+ORDER BY year DESC, month DESC, weekday
+LIMIT 100000;  -- 🚀 Keep UI Limit in Mind
+
+--Stations refined and smaller
+
+WITH combined_trips AS (
+    -- 2020 Departures
+    SELECT 
+        rider_type,
+        TRIM(CAST(id_start_station AS STRING)) AS station_id,  
+        'departure' AS trip_type,
+        EXTRACT(MONTH FROM trip_start_time) AS month_num,
+        duration_seconds
+    FROM `dproject.2020_trips`
+    WHERE duration_seconds BETWEEN 0 AND 12000 
+    AND rider_type != 'dependent'
+
+    UNION ALL
+
+    -- 2020 Arrivals
+    SELECT 
+        rider_type,
+        TRIM(CAST(id_end_station AS STRING)) AS station_id,  
+        'arrival' AS trip_type,  
+        EXTRACT(MONTH FROM trip_end_time) AS month_num,
+        duration_seconds
+    FROM `project.2020_trips`
+    WHERE duration_seconds BETWEEN 0 AND 12000 
+    AND rider_type != 'dependent'
+
+    -- Repeat for 2021–2024
+    -- 2024 Arrivals
+    SELECT 
+        rider_type,
+        TRIM(CAST(id_end_station AS STRING)) AS station_id,  
+        'arrival' AS trip_type,  
+        EXTRACT(MONTH FROM trip_end_time) AS month_num,
+        duration_seconds
+    FROM `project.2024_trips`
+    WHERE duration_seconds BETWEEN 0 AND 12000 
+    AND rider_type != 'dependent'
+)
+SELECT 
+    rider_type,
+    station_id,
+    month_num, -- or year_num
+    COUNT(*) AS total_trips, 
+    AVG(duration_seconds) AS avg_trip_duration,
+    MAX(duration_seconds) AS max_trip_duration,
+    MIN(duration_seconds) AS min_trip_duration
+FROM combined_trips
+GROUP BY rider_type, station_id, trip_type, year_num, month_num, day_num
+ORDER BY year_num DESC, month_num DESC, day_num
