@@ -1,0 +1,65 @@
+# An attempt to solve errors when dealing with blank, NaN, or NULL related errors which arose when uploading to BigQuery
+
+import pandas as pd
+import os
+
+# Define input and output paths
+DATA_FOLDER = r"filepath"
+OUTPUT_FOLDER = r"filepath"
+
+# Ensure the output folder exists
+os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+
+# Columns and their target types
+NUMERIC_COLUMNS = ['lat_end_station', 'lng_end_station', 'lat_start_station', 'lng_start_station']
+STRING_COLUMNS = ['id_bike', 'id_trip', 'id_end_station', 'name_end_station', 'id_start_station', 'name_start_station', 'rider_gender', 'rider_type', 'rideable_type']
+TIMESTAMP_COLUMNS = ['trip_start_time', 'trip_end_time']
+INTEGER_COLUMNS = ['rider_bday', 'duration_seconds']
+
+def process_file(file_path, output_path):
+    """Process a single file for proper null handling."""
+    print(f"Processing file: {file_path}")
+
+    # Read the CSV file
+    df = pd.read_csv(file_path, dtype=str)  # Read everything as strings for safety
+
+    # Convert empty strings or 'NaN' to NULL for all columns
+    df.replace(['', 'NaN'], "NULL", inplace=True)
+
+    # Explicitly handle numeric columns
+    for col in NUMERIC_COLUMNS + INTEGER_COLUMNS:
+        if col in df.columns:
+            df[col] = df[col].apply(lambda x: None if x == "NULL" else x).astype(float, errors='ignore')
+
+    # Explicitly handle timestamp columns
+    for col in TIMESTAMP_COLUMNS:
+        if col in df.columns:
+            df[col] = df[col].apply(lambda x: None if x == "NULL" else x)
+
+    # Save the processed file
+    df.to_csv(output_path, index=False)
+    print(f"Processed file saved: {output_path}")
+
+def preprocess_all_files(year_range):
+    """Process all files for null handling."""
+    for year in year_range:
+        input_file = os.path.join(DATA_FOLDER, f"{year}_to-clean.csv")
+        output_file = os.path.join(OUTPUT_FOLDER, f"{year}_trips.csv")
+
+        if os.path.exists(input_file):
+            process_file(input_file, output_file)
+        else:
+            print(f"File not found: {input_file}. Skipping.")
+
+def main():
+    # Prompt for year(s)
+    year_input = input("Enter year(s) to process (comma-separated, e.g., 2013,2014) or 'all': ").strip()
+    if year_input.lower() == "all":
+        year_range = range(2013, 2025)
+    else:
+        year_range = [int(year) for year in year_input.split(",")]
+
+    preprocess_all_files(year_range)
+
+if __name__ == "__main__":
+    main()
