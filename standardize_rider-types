@@ -1,0 +1,80 @@
+# Step 5 in the automated transformation sequence.
+# Rider-type transformation.
+
+# I wanted to perform analysis according to rider types so this was an important column transformation, standardizing all the similar names.
+
+#Step summary
+#Step 1 - Timestamp transformation
+#Step 2 - Duration calculation in seconds
+#Step 3 - Basic string calculation
+#Step 4 - Float and Int transformations
+#Step 5 - Specialized Rider-type transformation
+#Step 6 - Specialized xxx_name transformations
+
+# Objective summary
+
+#def to_rider_type('rider_type')
+# Processed by Step5.py and outputs to yyyy_clean5.csv
+# Coerce all data to STRING data but convert according to the Cases below.
+# 'Customer' : 'casual'
+# 'Subscriber' : 'member'
+# 'Dependent' : 'dependent'
+# 'casual' : 'casual'
+# 'member': 'member'
+# 'dependent': 'dependent'
+# If possible overwrite the old columns. If not possible, write to new columns 'user_type' and drop the original columns.
+# Empty cells and 'nan' cells to be formatted as SQL NULL value.
+
+
+import pandas as pd
+import os
+
+def map_rider_type(value):
+    """Map rider type to a standard value."""
+    mapping = {
+        "Customer": "casual",
+        "Subscriber": "member",
+        "Dependent": "dependent",
+        "casual": "casual",
+        "member": "member",
+        "dependent": "dependent"
+    }
+    return mapping.get(value, None)
+
+def process_file(file_path, output_path):
+    """Process a single file for rider type mapping."""
+    file_name = os.path.basename(file_path)
+    print(f"Processing file: {file_name}")
+
+    try:
+        # Load in chunks to reduce memory usage
+        chunk_size = 500000  # Adjust based on available memory
+        processed_chunks = []
+
+        for chunk in pd.read_csv(file_path, dtype=str, chunksize=chunk_size):
+            print(f"Processing chunk of size {len(chunk)}...")
+
+            # Map rider type
+            chunk['rider_type'] = chunk['rider_type'].apply(map_rider_type)
+
+            processed_chunks.append(chunk)
+
+        # Concatenate all processed chunks
+        result = pd.concat(processed_chunks)
+
+        # Save to output file
+        result.to_csv(output_path, index=False)
+        print(f"File saved: {output_path}")
+
+    except Exception as e:
+        print(f"Error processing file {file_name}: {e}")
+
+# Run the transformation
+year = input("Enter year of file to be processed: ")
+
+# File paths
+input_file = f"input_files{year}_clean-4.csv"
+output_file = f"output_files{year}_clean-5.csv"
+
+# Run the file processing function
+process_file(input_file, output_file)
