@@ -1,0 +1,93 @@
+# Pulling the files from the download portal and organizing them for cleaning
+# Python command line code
+
+import os
+import requests
+import zipfile
+import pandas as pd
+from pathlib import Path
+
+# Base URL for downloading files
+BASE_URL = "https://divvy-tripdata.s3.amazonaws.com/"
+
+# List of file names to download
+FILES = [
+    "202004-divvy-tripdata.zip",
+    "202005-divvy-tripdata.zip",
+    "202006-divvy-tripdata.zip",
+    # Add all other file names here
+]
+
+# Directory paths
+DOWNLOAD_DIR = "downloads"
+EXTRACT_DIR = "extracted"
+REPO_DIR = "repository"
+MERGED_DIR = "merged"
+
+# Create directories
+os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+os.makedirs(EXTRACT_DIR, exist_ok=True)
+os.makedirs(REPO_DIR, exist_ok=True)
+os.makedirs(MERGED_DIR, exist_ok=True)
+
+# Function to download files
+def download_files():
+    for file_name in FILES:
+        url = BASE_URL + file_name
+        local_path = os.path.join(DOWNLOAD_DIR, file_name)
+        if not os.path.exists(local_path):
+            print(f"Downloading {file_name}...")
+            response = requests.get(url)
+            with open(local_path, "wb") as f:
+                f.write(response.content)
+        else:
+            print(f"{file_name} already exists. Skipping download.")
+
+# Function to extract files
+def extract_files():
+    for file_name in FILES:
+        zip_path = os.path.join(DOWNLOAD_DIR, file_name)
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(EXTRACT_DIR)
+
+# Function to collect all .csv files in the repository
+def collect_csv_files():
+    for root, _, files in os.walk(EXTRACT_DIR):
+        for file in files:
+            if file.endswith(".csv"):
+                source_path = os.path.join(root, file)
+                dest_path = os.path.join(REPO_DIR, file)
+                if not os.path.exists(dest_path):  # Avoid duplicates
+                    print(f"Moving {file} to repository...")
+                    os.rename(source_path, dest_path)
+
+# Function to group and merge files
+def group_and_merge_files():
+    # Classify files by naming convention
+    groups = {"date": [], "stations": [], "trips": []}
+    
+    for file in os.listdir(REPO_DIR):
+        if file.startswith("Divvy_Stations"):
+            groups["stations"].append(os.path.join(REPO_DIR, file))
+        elif file.startswith("Divvy_Trips"):
+            groups["trips"].append(os.path.join(REPO_DIR, file))
+        elif file[:6].isdigit():  # Files starting with a date (YYYYMM)
+            groups["date"].append(os.path.join(REPO_DIR, file))
+    
+    # Merge each group
+    for group_name, file_paths in groups.items():
+        if not file_paths:
+            print(f"No files found for group: {group_name}")
+            continue
+        print(f"Merging files for group: {group_name}")
+        merged_data = pd.concat([pd.read_csv(f) for f in file_paths], ignore_index=True)
+        output_path = os.path.join(MERGED_DIR, f"{group_name}_merged.csv")
+        merged_data.to_csv(output_path, index=False)
+        print(f"Saved merged file for {group_name} group to {output_path}")
+
+# Main execution
+if __name__ == "__main__":
+    download_files()
+    extract_files()
+    collect_csv_files()
+    group_and_merge_files()
