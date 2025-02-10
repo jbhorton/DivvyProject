@@ -1,0 +1,104 @@
+# Python
+# Helps you devise a standardized header strategy.
+# Column names in the Divvy historical files changed from year to year. This program organizes them by year, pulls all the column names, samples them in various ways, and outputs into a reference CSV file.
+
+import os
+import pandas as pd
+
+# Directory and files
+BASE_DIR = r"filepath"
+OUTPUT_FILE = os.path.join(BASE_DIR, "Column_Summary.xlsx")
+
+trip_files_by_year = {
+    2013: ['Divvy_Trips_2013.csv'],
+    2014: ['Divvy_Trips_2014_Q1Q2.csv', 'Divvy_Trips_2014-Q3-07.csv', 'Divvy_Trips_2014-Q3-0809.csv', 'Divvy_Trips_2014-Q4.csv'],
+    2015: ['Divvy_Trips_2015_07.csv', 'Divvy_Trips_2015_08.csv', 'Divvy_Trips_2015_09.csv', 'Divvy_Trips_2015_Q4.csv', 'Divvy_Trips_2015-Q1.csv', 'Divvy_Trips_2015-Q2.csv'],
+    # Add more years/files here as needed
+}
+
+# Initialize a dictionary to store column metadata
+column_data = {}
+
+# Function to collect column insights
+def collect_column_insights(df, column_name):
+    try:
+        col_data = df[column_name].dropna()
+        if col_data.empty:
+            return {
+                "min_value": None,
+                "max_value": None,
+                "avg_value": None,
+                "shortest_value": None,
+                "longest_value": None,
+                "avg_length": None,
+            }
+        
+        if pd.api.types.is_numeric_dtype(col_data):
+            return {
+                "min_value": col_data.min(),
+                "max_value": col_data.max(),
+                "avg_value": col_data.mean(),
+                "shortest_value": None,
+                "longest_value": None,
+                "avg_length": None,
+            }
+        else:
+            col_data = col_data.astype(str)
+            lengths = col_data.str.len()
+            return {
+                "min_value": None,
+                "max_value": None,
+                "avg_value": None,
+                "shortest_value": col_data[lengths.idxmin()],
+                "longest_value": col_data[lengths.idxmax()],
+                "avg_length": lengths.mean(),
+            }
+    except Exception as e:
+        print(f"Error processing column {column_name}: {e}")
+        return {
+            "min_value": None,
+            "max_value": None,
+            "avg_value": None,
+            "shortest_value": None,
+            "longest_value": None,
+            "avg_length": None,
+        }
+
+# Process each file
+input("Repository Filepath:") = BASE_DIR
+for year, files in trip_files_by_year.items():
+    for file in files:
+        file_path = os.path.join(BASE_DIR, file)
+        if not os.path.exists(file_path):
+            print(f"File not found: {file_path}. Skipping...")
+            continue
+
+        print(f"Processing file: {file_path}")
+        try:
+            df = pd.read_csv(file_path)
+            for col in df.columns:
+                if col not in column_data:
+                    column_data[col] = {"year_files": [], "samples": {}}
+                column_data[col]["year_files"].append(f"{year}: {file}")
+                if "samples" not in column_data[col] or not column_data[col]["samples"]:
+                    column_data[col]["samples"] = collect_column_insights(df, col)
+        except Exception as e:
+            print(f"Error processing file {file_path}: {e}")
+
+# Create DataFrame for output
+output_rows = []
+for column_name, details in column_data.items():
+    row = {
+        "column_name": column_name,
+        "files_appeared_in": "; ".join(details["year_files"]),
+        **details["samples"],
+    }
+    output_rows.append(row)
+
+output_df = pd.DataFrame(output_rows)
+
+# Write to Excel
+with pd.ExcelWriter(OUTPUT_FILE) as writer:
+    output_df.to_excel(writer, index=False, sheet_name="Column Summary")
+
+print(f"Column summary exported to {OUTPUT_FILE}")
